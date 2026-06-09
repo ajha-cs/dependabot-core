@@ -99,12 +99,21 @@ module Dependabot
             "always-auth = true"
         end
 
+        # rubocop:disable Metrics/PerceivedComplexity
         sig { returns(T.nilable(String)) }
         def build_npmrc_content_from_credential_scopes
+          replaces_base_cred = registry_credentials.find(&:replaces_base?)
           scoped_credentials = registry_credentials.select { |cred| cred.scope && cred["registry"] }
-          return if scoped_credentials.empty?
+          return if replaces_base_cred.nil? && scoped_credentials.empty?
 
           lines = T.let([], T::Array[String])
+
+          if replaces_base_cred
+            registry = replaces_base_cred.fetch("registry")
+            registry_url = registry.start_with?("http") ? registry : "https://#{registry}"
+            lines << "registry=#{registry_url}"
+          end
+
           scoped_credentials.each do |cred|
             registry = cred.fetch("registry")
             registry_url = registry.start_with?("http") ? registry : "https://#{registry}"
@@ -113,8 +122,11 @@ module Dependabot
             end
           end
 
+          lines << "always-auth = true" if replaces_base_cred
+
           lines.join("\n")
         end
+        # rubocop:enable Metrics/PerceivedComplexity
 
         sig { returns(T.nilable(String)) }
         def build_yarnrc_content_from_lockfile

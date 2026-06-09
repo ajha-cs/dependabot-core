@@ -2570,6 +2570,198 @@ RSpec.describe Dependabot::NpmAndYarn::FileFetcher do
         .to eq("registry=https://myRegistry/api/npm/npm")
     end
   end
+
+  context "with no .npmrc, lockfile inference fails, but credentials have scope" do
+    let(:credentials) do
+      [Dependabot::Credential.new(
+        {
+          "type" => "git_source",
+          "host" => "github.com",
+          "username" => "x-access-token",
+          "password" => "token"
+        }
+      ), Dependabot::Credential.new(
+        {
+          "type" => "npm_registry",
+          "registry" => "npm.pkg.github.com",
+          "token" => "my_token",
+          "scope" => "@my-company"
+        }
+      )]
+    end
+
+    before do
+      allow(file_fetcher_instance).to receive(:commit).and_return("sha")
+
+      stub_request(:get, File.join(url, "package.json?ref=sha"))
+        .with(headers: { "Authorization" => "token token" })
+        .to_return(
+          status: 200,
+          body: fixture_to_response("projects/npm8/private_registry_ghpr_and_npm", "package.json"),
+          headers: json_header
+        )
+
+      stub_request(:get, File.join(url, "package-lock.json?ref=sha"))
+        .with(headers: { "Authorization" => "token token" })
+        .to_return(
+          status: 200,
+          body: fixture_to_response("projects/npm8/private_registry_ghpr_and_npm", "package-lock.json"),
+          headers: json_header
+        )
+    end
+
+    it "generates an npmrc from credential scopes" do
+      expect(file_fetcher_instance.files.map(&:name))
+        .to include(".npmrc")
+      expect(file_fetcher_instance.files.find { |f| f.name == ".npmrc" }.content)
+        .to eq("@my-company:registry=https://npm.pkg.github.com")
+    end
+  end
+
+  context "with no .npmrc, lockfile inference fails, but credentials have replaces-base" do
+    let(:credentials) do
+      [Dependabot::Credential.new(
+        {
+          "type" => "git_source",
+          "host" => "github.com",
+          "username" => "x-access-token",
+          "password" => "token"
+        }
+      ), Dependabot::Credential.new(
+        {
+          "type" => "npm_registry",
+          "registry" => "private.registry.com",
+          "token" => "my_token",
+          "replaces-base" => true
+        }
+      )]
+    end
+
+    before do
+      allow(file_fetcher_instance).to receive(:commit).and_return("sha")
+
+      stub_request(:get, File.join(url, "package.json?ref=sha"))
+        .with(headers: { "Authorization" => "token token" })
+        .to_return(
+          status: 200,
+          body: fixture_to_response("projects/npm8/private_registry_ghpr_and_npm", "package.json"),
+          headers: json_header
+        )
+
+      stub_request(:get, File.join(url, "package-lock.json?ref=sha"))
+        .with(headers: { "Authorization" => "token token" })
+        .to_return(
+          status: 200,
+          body: fixture_to_response("projects/npm8/private_registry_ghpr_and_npm", "package-lock.json"),
+          headers: json_header
+        )
+    end
+
+    it "generates an npmrc with the global registry" do
+      expect(file_fetcher_instance.files.map(&:name))
+        .to include(".npmrc")
+      expect(file_fetcher_instance.files.find { |f| f.name == ".npmrc" }.content)
+        .to eq("registry=https://private.registry.com")
+    end
+  end
+
+  context "with no .npmrc, lockfile inference fails, and credentials have both scope and replaces-base" do
+    let(:credentials) do
+      [Dependabot::Credential.new(
+        {
+          "type" => "git_source",
+          "host" => "github.com",
+          "username" => "x-access-token",
+          "password" => "token"
+        }
+      ), Dependabot::Credential.new(
+        {
+          "type" => "npm_registry",
+          "registry" => "private.registry.com",
+          "token" => "base_token",
+          "replaces-base" => true
+        }
+      ), Dependabot::Credential.new(
+        {
+          "type" => "npm_registry",
+          "registry" => "npm.pkg.github.com",
+          "token" => "scope_token",
+          "scope" => "@my-org"
+        }
+      )]
+    end
+
+    before do
+      allow(file_fetcher_instance).to receive(:commit).and_return("sha")
+
+      stub_request(:get, File.join(url, "package.json?ref=sha"))
+        .with(headers: { "Authorization" => "token token" })
+        .to_return(
+          status: 200,
+          body: fixture_to_response("projects/npm8/private_registry_ghpr_and_npm", "package.json"),
+          headers: json_header
+        )
+
+      stub_request(:get, File.join(url, "package-lock.json?ref=sha"))
+        .with(headers: { "Authorization" => "token token" })
+        .to_return(
+          status: 200,
+          body: fixture_to_response("projects/npm8/private_registry_ghpr_and_npm", "package-lock.json"),
+          headers: json_header
+        )
+    end
+
+    it "generates an npmrc with global and scoped registries" do
+      expect(file_fetcher_instance.files.map(&:name))
+        .to include(".npmrc")
+      expect(file_fetcher_instance.files.find { |f| f.name == ".npmrc" }.content)
+        .to eq("registry=https://private.registry.com\n@my-org:registry=https://npm.pkg.github.com")
+    end
+  end
+
+  context "with no .npmrc, lockfile inference fails, and no credential scope/replaces-base" do
+    let(:credentials) do
+      [Dependabot::Credential.new(
+        {
+          "type" => "git_source",
+          "host" => "github.com",
+          "username" => "x-access-token",
+          "password" => "token"
+        }
+      ), Dependabot::Credential.new(
+        {
+          "type" => "npm_registry",
+          "registry" => "npm.pkg.github.com",
+          "token" => "my_token"
+        }
+      )]
+    end
+
+    before do
+      allow(file_fetcher_instance).to receive(:commit).and_return("sha")
+
+      stub_request(:get, File.join(url, "package.json?ref=sha"))
+        .with(headers: { "Authorization" => "token token" })
+        .to_return(
+          status: 200,
+          body: fixture_to_response("projects/npm8/private_registry_ghpr_and_npm", "package.json"),
+          headers: json_header
+        )
+
+      stub_request(:get, File.join(url, "package-lock.json?ref=sha"))
+        .with(headers: { "Authorization" => "token token" })
+        .to_return(
+          status: 200,
+          body: fixture_to_response("projects/npm8/private_registry_ghpr_and_npm", "package-lock.json"),
+          headers: json_header
+        )
+    end
+
+    it "does not generate an npmrc" do
+      expect(file_fetcher_instance.files.map(&:name))
+        .not_to include(".npmrc")
+    end
+  end
 end
 
 def fixture_to_response(dir, file)

@@ -1307,6 +1307,115 @@ RSpec.describe Dependabot::NpmAndYarn::FileUpdater::NpmrcBuilder do
             NPMRC
         end
       end
+
+      context "when credentials have replaces-base and no lockfile" do
+        let(:dependency_files) { project_dependency_files("generic/simple") }
+
+        let(:credentials) do
+          [Dependabot::Credential.new(
+            {
+              "type" => "git_source",
+              "host" => "github.com",
+              "username" => "x-access-token",
+              "password" => "token"
+            }
+          ), Dependabot::Credential.new(
+            {
+              "type" => "npm_registry",
+              "registry" => "private.registry.com",
+              "token" => "my_token",
+              "replaces-base" => true
+            }
+          )]
+        end
+
+        it "generates a global registry line with always-auth" do
+          expect(npmrc_content)
+            .to eq(<<~NPMRC.chomp)
+              registry=https://private.registry.com
+              always-auth = true
+              //private.registry.com/:_authToken=my_token
+            NPMRC
+        end
+      end
+
+      context "when credentials have both replaces-base and scope" do
+        let(:dependency_files) { project_dependency_files("generic/simple") }
+
+        let(:credentials) do
+          [Dependabot::Credential.new(
+            {
+              "type" => "git_source",
+              "host" => "github.com",
+              "username" => "x-access-token",
+              "password" => "token"
+            }
+          ), Dependabot::Credential.new(
+            {
+              "type" => "npm_registry",
+              "registry" => "private.registry.com",
+              "token" => "base_token",
+              "replaces-base" => true
+            }
+          ), Dependabot::Credential.new(
+            {
+              "type" => "npm_registry",
+              "registry" => "npm.pkg.github.com",
+              "token" => "scope_token",
+              "scope" => "@my-org"
+            }
+          )]
+        end
+
+        it "generates global registry, scoped registry, and auth lines" do
+          expect(npmrc_content)
+            .to eq(<<~NPMRC.chomp)
+              registry=https://private.registry.com
+              @my-org:registry=https://npm.pkg.github.com
+              always-auth = true
+              //private.registry.com/:_authToken=base_token
+              //npm.pkg.github.com/:_authToken=scope_token
+            NPMRC
+        end
+      end
+
+      context "when credentials have only replaces-base (no scope)" do
+        let(:dependency_files) { project_dependency_files("generic/simple") }
+
+        let(:credentials) do
+          [Dependabot::Credential.new(
+            {
+              "type" => "git_source",
+              "host" => "github.com",
+              "username" => "x-access-token",
+              "password" => "token"
+            }
+          ), Dependabot::Credential.new(
+            {
+              "type" => "npm_registry",
+              "registry" => "private.registry.com",
+              "token" => "my_token",
+              "replaces-base" => true
+            }
+          ), Dependabot::Credential.new(
+            {
+              "type" => "npm_registry",
+              "registry" => "registry.npmjs.org",
+              "token" => "public_token"
+            }
+          )]
+        end
+
+        it "generates global registry with always-auth and all auth lines" do
+          expect(npmrc_content)
+            .to eq(<<~NPMRC.chomp)
+              registry=https://private.registry.com
+              always-auth = true
+              //private.registry.com/:_authToken=my_token
+              //registry.npmjs.org/:_authToken=public_token
+            NPMRC
+        end
+      end
     end
   end
 end

@@ -139,9 +139,13 @@ module Dependabot
 
       # If every entry in the lockfile uses the same registry, we can infer
       # that there is a global .npmrc file, so add it here as if it were in the repo.
+      # Falls back to generating from credentials when inference fails but
+      # credentials have explicit scope or replaces-base configuration.
 
       # rubocop:disable Metrics/AbcSize
       # rubocop:disable Metrics/PerceivedComplexity
+      # rubocop:disable Metrics/CyclomaticComplexity
+      # rubocop:disable Metrics/MethodLength
       sig { returns(T.nilable(DependencyFile)) }
       def inferred_npmrc # rubocop:disable Metrics/PerceivedComplexity
         return @inferred_npmrc if defined?(@inferred_npmrc)
@@ -187,9 +191,50 @@ module Dependabot
           )
         end
 
+        # Lockfile inference failed — fall back to generating from credentials
+        npmrc_from_credentials = generate_npmrc_from_credentials
+        if npmrc_from_credentials
+          Dependabot.logger.info("Generated .npmrc from credential scope/replaces-base configuration")
+          return @inferred_npmrc ||= npmrc_from_credentials
+        end
+
         @inferred_npmrc ||= nil
       end
+      # rubocop:enable Metrics/MethodLength
+      # rubocop:enable Metrics/CyclomaticComplexity
       # rubocop:enable Metrics/AbcSize
+      # rubocop:enable Metrics/PerceivedComplexity
+
+      # rubocop:disable Metrics/PerceivedComplexity
+      sig { returns(T.nilable(DependencyFile)) }
+      def generate_npmrc_from_credentials
+        registry_creds = credentials.select { |cred| cred["type"] == "npm_registry" }
+        replaces_base_cred = registry_creds.find(&:replaces_base?)
+        scoped_credentials = registry_creds.select { |cred| cred.scope && cred["registry"] }
+
+        return unless replaces_base_cred || scoped_credentials.any?
+
+        lines = T.let([], T::Array[String])
+
+        if replaces_base_cred
+          registry = T.must(replaces_base_cred["registry"])
+          registry_url = registry.start_with?("http") ? registry : "https://#{registry}"
+          lines << "registry=#{registry_url}"
+        end
+
+        scoped_credentials.each do |cred|
+          registry = T.must(cred["registry"])
+          registry_url = registry.start_with?("http") ? registry : "https://#{registry}"
+          T.must(cred.scope).each do |s|
+            lines << "#{Helpers.normalize_npm_scope(s)}:registry=#{registry_url}"
+          end
+        end
+
+        Dependabot::DependencyFile.new(
+          name: ".npmrc",
+          content: lines.join("\n")
+        )
+      end
       # rubocop:enable Metrics/PerceivedComplexity
 
       sig { returns(T.nilable(T.any(Integer, String))) }
