@@ -38,6 +38,37 @@ module Dependabot
           @dependencies = dependencies
         end
 
+        # Generates .npmrc content solely from credential scope/replaces-base properties,
+        # without lockfile inference or auth token lines. Used by FileFetcher as a fallback
+        # when lockfile inference fails.
+        # rubocop:disable Metrics/PerceivedComplexity
+        sig { params(credentials: T::Array[Dependabot::Credential]).returns(T.nilable(String)) }
+        def self.npmrc_content_from_credentials(credentials)
+          registry_creds = credentials.select { |cred| cred.fetch("type") == "npm_registry" }
+          replaces_base_cred = registry_creds.find(&:replaces_base?)
+          scoped_credentials = registry_creds.select { |cred| cred.scope && cred["registry"] }
+          return if replaces_base_cred.nil? && scoped_credentials.empty?
+
+          lines = T.let([], T::Array[String])
+
+          if replaces_base_cred
+            registry = replaces_base_cred.fetch("registry")
+            registry_url = registry.start_with?("http") ? registry : "https://#{registry}"
+            lines << "registry=#{registry_url}"
+          end
+
+          scoped_credentials.each do |cred|
+            registry = cred.fetch("registry")
+            registry_url = registry.start_with?("http") ? registry : "https://#{registry}"
+            T.must(cred.scope).each do |s|
+              lines << "#{Helpers.normalize_npm_scope(s)}:registry=#{registry_url}"
+            end
+          end
+
+          lines.join("\n")
+        end
+        # rubocop:enable Metrics/PerceivedComplexity
+
         # PROXY WORK
         sig { returns(String) }
         def npmrc_content
@@ -99,34 +130,16 @@ module Dependabot
             "always-auth = true"
         end
 
-        # rubocop:disable Metrics/PerceivedComplexity
         sig { returns(T.nilable(String)) }
         def build_npmrc_content_from_credential_scopes
+          content = self.class.npmrc_content_from_credentials(credentials)
+          return unless content
+
           replaces_base_cred = registry_credentials.find(&:replaces_base?)
-          scoped_credentials = registry_credentials.select { |cred| cred.scope && cred["registry"] }
-          return if replaces_base_cred.nil? && scoped_credentials.empty?
+          return content unless replaces_base_cred
 
-          lines = T.let([], T::Array[String])
-
-          if replaces_base_cred
-            registry = replaces_base_cred.fetch("registry")
-            registry_url = registry.start_with?("http") ? registry : "https://#{registry}"
-            lines << "registry=#{registry_url}"
-          end
-
-          scoped_credentials.each do |cred|
-            registry = cred.fetch("registry")
-            registry_url = registry.start_with?("http") ? registry : "https://#{registry}"
-            T.must(cred.scope).each do |s|
-              lines << "#{Helpers.normalize_npm_scope(s)}:registry=#{registry_url}"
-            end
-          end
-
-          lines << "always-auth = true" if replaces_base_cred
-
-          lines.join("\n")
+          "#{content}\nalways-auth = true"
         end
-        # rubocop:enable Metrics/PerceivedComplexity
 
         sig { returns(T.nilable(String)) }
         def build_yarnrc_content_from_lockfile

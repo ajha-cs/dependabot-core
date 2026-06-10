@@ -12,6 +12,7 @@ require "dependabot/npm_and_yarn/helpers"
 require "dependabot/npm_and_yarn/package_manager"
 require "dependabot/npm_and_yarn/file_parser"
 require "dependabot/npm_and_yarn/file_parser/lockfile_parser"
+require "dependabot/npm_and_yarn/file_updater/npmrc_builder"
 
 module Dependabot
   module NpmAndYarn
@@ -205,37 +206,16 @@ module Dependabot
       # rubocop:enable Metrics/AbcSize
       # rubocop:enable Metrics/PerceivedComplexity
 
-      # rubocop:disable Metrics/PerceivedComplexity
       sig { returns(T.nilable(DependencyFile)) }
       def generate_npmrc_from_credentials
-        registry_creds = credentials.select { |cred| cred["type"] == "npm_registry" }
-        replaces_base_cred = registry_creds.find(&:replaces_base?)
-        scoped_credentials = registry_creds.select { |cred| cred.scope && cred["registry"] }
-
-        return unless replaces_base_cred || scoped_credentials.any?
-
-        lines = T.let([], T::Array[String])
-
-        if replaces_base_cred
-          registry = T.must(replaces_base_cred["registry"])
-          registry_url = registry.start_with?("http") ? registry : "https://#{registry}"
-          lines << "registry=#{registry_url}"
-        end
-
-        scoped_credentials.each do |cred|
-          registry = T.must(cred["registry"])
-          registry_url = registry.start_with?("http") ? registry : "https://#{registry}"
-          T.must(cred.scope).each do |s|
-            lines << "#{Helpers.normalize_npm_scope(s)}:registry=#{registry_url}"
-          end
-        end
+        content = NpmAndYarn::FileUpdater::NpmrcBuilder.npmrc_content_from_credentials(credentials)
+        return unless content
 
         Dependabot::DependencyFile.new(
           name: ".npmrc",
-          content: lines.join("\n")
+          content: content
         )
       end
-      # rubocop:enable Metrics/PerceivedComplexity
 
       sig { returns(T.nilable(T.any(Integer, String))) }
       def npm_version
