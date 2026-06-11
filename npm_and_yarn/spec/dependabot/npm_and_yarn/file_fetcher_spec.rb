@@ -2591,6 +2591,7 @@ RSpec.describe Dependabot::NpmAndYarn::FileFetcher do
     end
 
     before do
+      Dependabot::Experiments.register(:enable_npmrc_credential_generation, true)
       allow(file_fetcher_instance).to receive(:commit).and_return("sha")
 
       stub_request(:get, File.join(url, "package.json?ref=sha"))
@@ -2638,6 +2639,7 @@ RSpec.describe Dependabot::NpmAndYarn::FileFetcher do
     end
 
     before do
+      Dependabot::Experiments.register(:enable_npmrc_credential_generation, true)
       allow(file_fetcher_instance).to receive(:commit).and_return("sha")
 
       stub_request(:get, File.join(url, "package.json?ref=sha"))
@@ -2692,6 +2694,7 @@ RSpec.describe Dependabot::NpmAndYarn::FileFetcher do
     end
 
     before do
+      Dependabot::Experiments.register(:enable_npmrc_credential_generation, true)
       allow(file_fetcher_instance).to receive(:commit).and_return("sha")
 
       stub_request(:get, File.join(url, "package.json?ref=sha"))
@@ -2738,6 +2741,7 @@ RSpec.describe Dependabot::NpmAndYarn::FileFetcher do
     end
 
     before do
+      Dependabot::Experiments.register(:enable_npmrc_credential_generation, true)
       allow(file_fetcher_instance).to receive(:commit).and_return("sha")
 
       stub_request(:get, File.join(url, "package.json?ref=sha"))

@@ -193,10 +193,12 @@ module Dependabot
         end
 
         # Lockfile inference failed — fall back to generating from credentials
-        npmrc_from_credentials = generate_npmrc_from_credentials
-        if npmrc_from_credentials
-          Dependabot.logger.info("Generated .npmrc from credential scope/replaces-base configuration")
-          return @inferred_npmrc ||= npmrc_from_credentials
+        if Dependabot::Experiments.enabled?(:enable_npmrc_credential_generation)
+          npmrc_from_credentials = generate_npmrc_from_credentials
+          if npmrc_from_credentials
+            Dependabot.logger.info("Generated .npmrc from credential scope/replaces-base configuration")
+            return @inferred_npmrc ||= npmrc_from_credentials
+          end
         end
 
         @inferred_npmrc ||= nil
