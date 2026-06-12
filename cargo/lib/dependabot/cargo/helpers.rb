@@ -8,20 +8,6 @@ module Dependabot
     module Helpers
       extend T::Sig
 
-      # Disable Cargo's *global* credential providers so that Cargo does not attempt to look up registry tokens
-      # on its own. The dependabot proxy (https://github.com/dependabot/proxy/) handles all registry authentication
-      # transparently by intercepting HTTP requests and injecting the appropriate credentials.
-      #
-      # Note: this only affects the global/default credential provider. Per-registry `credential-provider` settings
-      # in .cargo/config.toml override this env var, so those are stripped separately by `sanitize_cargo_config`.
-      #
-      # Uses ||= so developers can override by setting CARGO_REGISTRY_GLOBAL_CREDENTIAL_PROVIDERS=cargo:token in their
-      # shell (along with the appropriate CARGO_REGISTRIES_{NAME}_TOKEN vars) for local development without the proxy.
-      sig { void }
-      def self.bypass_cargo_credential_providers
-        ENV["CARGO_REGISTRY_GLOBAL_CREDENTIAL_PROVIDERS"] ||= ""
-      end
-
       # Strip per-registry `credential-provider` settings from .cargo/config.toml.
       #
       # Users may have entries like:

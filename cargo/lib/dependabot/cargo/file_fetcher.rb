@@ -8,6 +8,7 @@ require "toml-rb"
 require "dependabot/file_fetchers"
 require "dependabot/file_fetchers/base"
 require "dependabot/file_filtering"
+require "dependabot/experiments"
 require "dependabot/cargo/file_parser"
 
 # Docs on Cargo workspaces:
@@ -26,6 +27,17 @@ module Dependabot
       sig { override.returns(String) }
       def self.required_files_message
         "Repo must contain a Cargo.toml."
+      end
+
+      # Parses cargo config content and returns the names of custom registries
+      # defined via [registries.<name>] sections.
+      sig { params(config_content: String).returns(T::Array[String]) }
+      def self.custom_registry_names(config_content)
+        parsed = TomlRB.parse(config_content)
+        registries = parsed["registries"]
+        return [] unless registries.is_a?(Hash)
+
+        registries.keys
       end
 
       sig { override.returns(T.nilable(T::Hash[Symbol, T.untyped])) }
@@ -441,6 +453,36 @@ module Dependabot
           fetch_cargo_config_from_parent_dirs,
           T.nilable(Dependabot::DependencyFile)
         )
+
+        write_registry_credentials(@cargo_config) if @cargo_config
+
+        @cargo_config
+      end
+
+      sig { params(config_file: Dependabot::DependencyFile).void }
+      def write_registry_credentials(config_file)
+        return unless ENV["DEPENDABOT"]
+        return unless Dependabot::Experiments.enabled?(:cargo_set_registry_token_auth)
+
+        # Cargo requires that all non-default registries use an authentication mechanism.  Since the proxy injects
+        # the appropriate tokens at runtime, we just need to force a garbage token to satisfy the Cargo tooling.  The
+        # proxy will then replace with the real token.
+        #   https://doc.rust-lang.org/cargo/reference/registry-authentication.html
+        #   https://doc.rust-lang.org/cargo/reference/config.html#credentials
+        cargo_home = ENV.fetch("CARGO_HOME", nil)
+        if cargo_home.nil?
+          Dependabot.logger.warn("CARGO_HOME is not set; skipping registry token auth setup")
+          return
+        end
+
+        registry_names = self.class.custom_registry_names(T.must(config_file.content))
+        return if registry_names.empty?
+
+        Dependabot.logger.info("Setting token auth for registries: #{registry_names.join(', ')}")
+
+        cred_lines = registry_names.map { |name| ["[registries.#{name}]", "token = \"garbage_token\""] }.flatten
+        cred_content = cred_lines.join("\n")
+        File.write("#{cargo_home}/credentials.toml", cred_content)
       end
 
       sig { returns(T.nilable(Dependabot::DependencyFile)) }

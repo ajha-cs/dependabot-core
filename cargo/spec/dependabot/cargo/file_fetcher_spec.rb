@@ -2,7 +2,10 @@
 # frozen_string_literal: true
 
 require "spec_helper"
+require "tmpdir"
+require "fileutils"
 require "dependabot/cargo/file_fetcher"
+require "dependabot/experiments"
 require_common_spec "file_fetchers/shared_examples_for_file_fetchers"
 
 RSpec.describe Dependabot::Cargo::FileFetcher do
@@ -1580,6 +1583,184 @@ RSpec.describe Dependabot::Cargo::FileFetcher do
         # Verify file names are correct
         expect(files[0].name).to eq("Cargo.toml")
         expect(files[1].name).to eq("subdir/Cargo.toml")
+      end
+    end
+  end
+
+  describe ".custom_registry_names" do
+    it "returns empty array when no registries are defined" do
+      config_content = <<~TOML
+        [net]
+        git-fetch-with-cli = true
+      TOML
+      expect(described_class.custom_registry_names(config_content)).to eq([])
+    end
+
+    it "returns a single registry name" do
+      config_content = <<~TOML
+        [registries.my-registry]
+        index = "sparse+https://example.com/index/"
+      TOML
+      expect(described_class.custom_registry_names(config_content)).to eq(["my-registry"])
+    end
+
+    it "returns multiple registry names" do
+      config_content = <<~TOML
+        [registries.first-registry]
+        index = "sparse+https://first.example.com/index/"
+
+        [registries.second-registry]
+        index = "sparse+https://second.example.com/index/"
+      TOML
+      expect(described_class.custom_registry_names(config_content)).to eq(%w(first-registry second-registry))
+    end
+
+    it "ignores non-registry sections" do
+      config_content = <<~TOML
+        [registry]
+        default = "my-registry"
+
+        [registries.my-registry]
+        index = "sparse+https://example.com/index/"
+
+        [net]
+        git-fetch-with-cli = true
+      TOML
+      expect(described_class.custom_registry_names(config_content)).to eq(["my-registry"])
+    end
+
+    it "handles leading whitespace on registry lines" do
+      config_content = "  [registries.spaced-registry]\n  index = \"https://example.com\"\n"
+      expect(described_class.custom_registry_names(config_content)).to eq(["spaced-registry"])
+    end
+
+    it "returns empty array for empty content" do
+      expect(described_class.custom_registry_names("")).to eq([])
+    end
+  end
+
+  describe "registry token auth" do
+    let(:cargo_home) { Dir.mktmpdir("cargo_home_test") }
+    let(:credentials_path) { File.join(cargo_home, "credentials.toml") }
+
+    before do
+      allow(file_fetcher_instance).to receive(:commit).and_return("sha")
+      allow(ENV).to receive(:fetch).and_call_original
+      allow(ENV).to receive(:fetch).with("CARGO_HOME", nil).and_return(cargo_home)
+      ENV["DEPENDABOT"] = "true"
+    end
+
+    after do
+      FileUtils.rm_rf(cargo_home)
+      Dependabot::Experiments.reset!
+      ENV.delete("DEPENDABOT")
+    end
+
+    context "when cargo_set_registry_token_auth experiment is enabled" do
+      before do
+        Dependabot::Experiments.register(:cargo_set_registry_token_auth, true)
+      end
+
+      context "when cargo config has custom registries" do
+        let(:config_content) do
+          Base64.encode64(<<~TOML)
+            [registries.my-private-registry]
+            index = "sparse+https://private.example.com/index/"
+
+            [registries.another-registry]
+            index = "sparse+https://another.example.com/index/"
+          TOML
+        end
+
+        before do
+          stub_request(:get, url + ".cargo/config.toml?ref=sha")
+            .with(headers: { "Authorization" => "token token" })
+            .to_return(
+              status: 200,
+              body: {
+                name: "config.toml",
+                path: ".cargo/config.toml",
+                sha: "abc123",
+                size: 100,
+                encoding: "base64",
+                content: config_content
+              }.to_json,
+              headers: json_header
+            )
+        end
+
+        it "writes credentials.toml with placeholder tokens" do
+          file_fetcher_instance.send(:cargo_config)
+
+          expect(File.exist?(credentials_path)).to be true
+          content = File.read(credentials_path)
+          expect(content).to include("[registries.my-private-registry]")
+          expect(content).to include("[registries.another-registry]")
+          expect(content).to include('token = "garbage_token"')
+        end
+      end
+
+      context "when cargo config has no custom registries" do
+        before do
+          stub_request(:get, url + ".cargo/config.toml?ref=sha")
+            .with(headers: { "Authorization" => "token token" })
+            .to_return(
+              status: 200,
+              body: {
+                name: "config.toml",
+                path: ".cargo/config.toml",
+                sha: "abc123",
+                size: 50,
+                encoding: "base64",
+                content: Base64.encode64("[net]\ngit-fetch-with-cli = true\n")
+              }.to_json,
+              headers: json_header
+            )
+        end
+
+        it "does not write credentials.toml" do
+          file_fetcher_instance.send(:cargo_config)
+
+          expect(File.exist?(credentials_path)).to be false
+        end
+      end
+    end
+
+    context "when cargo_set_registry_token_auth experiment is disabled" do
+      before do
+        Dependabot::Experiments.register(:cargo_set_registry_token_auth, false)
+      end
+
+      context "when cargo config has custom registries" do
+        let(:config_content) do
+          Base64.encode64(<<~TOML)
+            [registries.my-private-registry]
+            index = "sparse+https://private.example.com/index/"
+          TOML
+        end
+
+        before do
+          stub_request(:get, url + ".cargo/config.toml?ref=sha")
+            .with(headers: { "Authorization" => "token token" })
+            .to_return(
+              status: 200,
+              body: {
+                name: "config.toml",
+                path: ".cargo/config.toml",
+                sha: "abc123",
+                size: 100,
+                encoding: "base64",
+                content: config_content
+              }.to_json,
+              headers: json_header
+            )
+        end
+
+        it "does not write credentials.toml" do
+          file_fetcher_instance.send(:cargo_config)
+
+          expect(File.exist?(credentials_path)).to be false
+        end
       end
     end
   end
