@@ -2571,6 +2571,74 @@ RSpec.describe Dependabot::NpmAndYarn::FileFetcher do
     end
   end
 
+  context "with a committed .npmrc, but credentials have scope (scope overrides committed file)" do
+    let(:credentials) do
+      [Dependabot::Credential.new(
+        {
+          "type" => "git_source",
+          "host" => "github.com",
+          "username" => "x-access-token",
+          "password" => "token"
+        }
+      ), Dependabot::Credential.new(
+        {
+          "type" => "npm_registry",
+          "registry" => "npm.pkg.github.com",
+          "token" => "my_token",
+          "scope" => "@my-company"
+        }
+      )]
+    end
+
+    before do
+      Dependabot::Experiments.register(:enable_npmrc_credential_generation, true)
+      allow(file_fetcher_instance).to receive(:commit).and_return("sha")
+
+      stub_request(:get, url + "?ref=sha")
+        .with(headers: { "Authorization" => "token token" })
+        .to_return(
+          status: 200,
+          body: fixture("github", "contents_js_npm_with_config.json"),
+          headers: json_header
+        )
+
+      stub_request(:get, File.join(url, "package.json?ref=sha"))
+        .with(headers: { "Authorization" => "token token" })
+        .to_return(
+          status: 200,
+          body: fixture("github", "package_json_content.json"),
+          headers: json_header
+        )
+
+      stub_request(:get, File.join(url, "package-lock.json?ref=sha"))
+        .with(headers: { "Authorization" => "token token" })
+        .to_return(
+          status: 200,
+          body: fixture("github", "package_lock_content.json"),
+          headers: json_header
+        )
+
+      stub_request(:get, File.join(url, ".npmrc?ref=sha"))
+        .with(headers: { "Authorization" => "token token" })
+        .to_return(
+          status: 200,
+          body: fixture("github", "npmrc_content.json"),
+          headers: json_header
+        )
+    end
+
+    it "uses generated .npmrc from credentials instead of committed file" do
+      npmrc_file = file_fetcher_instance.files.find { |f| f.name == ".npmrc" }
+      expect(npmrc_file).not_to be_nil
+      expect(npmrc_file.content).to eq("@my-company:registry=https://npm.pkg.github.com")
+    end
+
+    it "does not include the committed .npmrc as a separate file" do
+      npmrc_files = file_fetcher_instance.files.select { |f| f.name == ".npmrc" }
+      expect(npmrc_files.count).to eq(1)
+    end
+  end
+
   context "with no .npmrc, lockfile inference fails, but credentials have scope" do
     let(:credentials) do
       [Dependabot::Credential.new(

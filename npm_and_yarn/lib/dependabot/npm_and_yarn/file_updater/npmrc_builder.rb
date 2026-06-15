@@ -12,7 +12,7 @@ module Dependabot
       # Build a .npmrc file from the lockfile content, credentials, and any
       # committed .npmrc
       # We should refactor this to use Package::RegistryFinder
-      class NpmrcBuilder
+      class NpmrcBuilder # rubocop:disable Metrics/ClassLength
         extend T::Sig
 
         CENTRAL_REGISTRIES = T.let(
@@ -70,8 +70,18 @@ module Dependabot
         # rubocop:enable Metrics/PerceivedComplexity
 
         # PROXY WORK
+        # rubocop:disable Metrics/PerceivedComplexity
         sig { returns(String) }
         def npmrc_content
+          # When credentials have explicit scope, always generate from credentials
+          # (overrides committed .npmrc and lockfile inference)
+          if credentials_have_scope?
+            Dependabot.logger.info(
+              "Generating .npmrc from credential scope configuration (committed .npmrc ignored)"
+            )
+            return build_npmrc_from_scope_credentials
+          end
+
           initial_content =
             if npmrc_file then complete_npmrc_from_credentials
             elsif yarnrc_file then build_npmrc_from_yarnrc
@@ -91,6 +101,7 @@ module Dependabot
 
           final_content
         end
+        # rubocop:enable Metrics/PerceivedComplexity
 
         # PROXY WORK
         # Yarn allows registries to be defined either in an .npmrc or .yarnrc
@@ -117,6 +128,30 @@ module Dependabot
 
         sig { returns(T::Array[Dependabot::Dependency]) }
         attr_reader :dependencies
+
+        sig { returns(T::Boolean) }
+        def credentials_have_scope?
+          registry_credentials.any?(&:scope)
+        end
+
+        sig { returns(String) }
+        def build_npmrc_from_scope_credentials
+          content = T.must(self.class.npmrc_content_from_credentials(credentials))
+
+          # Append auth lines for all configured registries
+          lines = [content]
+          registry_credentials.each do |cred|
+            token = cred.fetch("token", nil)
+            next unless token
+
+            lines << auth_line(token, cred.fetch("registry"))
+          end
+
+          replaces_base_cred = registry_credentials.find(&:replaces_base?)
+          lines << "always-auth = true" if replaces_base_cred
+
+          lines.reject(&:empty?).join("\n")
+        end
 
         sig { returns(T.nilable(String)) }
         def build_npmrc_content_from_lockfile
